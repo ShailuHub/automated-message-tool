@@ -1,10 +1,14 @@
 import { google } from "googleapis";
 import googleOAuthClient, { openai } from "../oauthcredential/credential";
+import nodemailer from "nodemailer";
 
 class EmailService {
   async generateGoogleAuthUrl() {
     try {
-      const serviceScope = ["https://mail.google.com/"];
+      const serviceScope = [
+        "https://mail.google.com/",
+        "https://www.googleapis.com/auth/gmail.send",
+      ];
       const authUrl = googleOAuthClient.generateAuthUrl({
         access_type: "offline",
         scope: serviceScope,
@@ -90,23 +94,27 @@ class EmailService {
     const body: string = replyMsg.replyBody;
 
     try {
-      const gmail = google.gmail({ version: "v1", auth: googleOAuthClient });
-      const email = `
-        From: ${from}
-        To: ${to}
-        Subject: ${subject}
-
-        ${body}
-      `;
-
-      const base64EncodedEmail = Buffer.from(email).toString("base64");
-      const response = await gmail.users.messages.send({
-        userId: "me",
-        requestBody: {
-          raw: base64EncodedEmail,
-        },
+      const auth: any = {
+        type: "OAuth2",
+        user: from,
+        clientId: process.env.clientId,
+        clientSecret: process.env.clientSecret,
+        accessToken: googleOAuthClient.credentials.access_token,
+      };
+      // Create transporter
+      const transport = nodemailer.createTransport({
+        service: "gmail",
+        auth: auth,
       });
-      console.log("Email sent:", response.data);
+
+      const mailOptions = {
+        from: from,
+        to: to,
+        subject: subject,
+        text: body,
+        html: `<h1>Hello from Gmail</h1><p>${body}</p>`,
+      };
+      const response = await transport.sendMail(mailOptions);
     } catch (error) {
       console.error("Error sending email:", error);
     }
@@ -139,11 +147,13 @@ class EmailService {
           break;
       }
 
-      const recipientEmail = this.extractRecipientEmail(msg);
-      const sendEmail = this.extractSenderEmail(msg);
-      console.log(recipientEmail, sendEmail);
+      const recipientEmail = this.extractRecipientEmail(msg)
+        .trim()
+        .toLowerCase();
+      const senderEmail = this.extractSenderEmail(msg).trim().toLowerCase();
+
       // Send the automated reply using Gmail API
-      await this.sendEmail(replyMsg, recipientEmail, sendEmail);
+      await this.sendEmail(replyMsg, senderEmail, recipientEmail);
     } catch (error) {
       console.error("Error sending automated reply:", error);
     }
@@ -175,6 +185,7 @@ class EmailService {
 
       for (const header of headers) {
         if (header.name === "From") {
+          console.log(header.value);
           const emailStartIndex = header.value.indexOf("<");
           const emailEndIndex = header.value.indexOf(">");
           senderEmail = header.value.substring(
@@ -184,6 +195,7 @@ class EmailService {
           break;
         }
       }
+      console.log(senderEmail);
       return senderEmail;
     } catch (error) {
       console.error("Error extracting recipient email:", error);

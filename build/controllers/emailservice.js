@@ -1,27 +1,4 @@
 "use strict";
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || function (mod) {
-    if (mod && mod.__esModule) return mod;
-    var result = {};
-    if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
-    __setModuleDefault(result, mod);
-    return result;
-};
 var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
     function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
     return new (P || (P = Promise))(function (resolve, reject) {
@@ -31,14 +8,21 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", { value: true });
 const googleapis_1 = require("googleapis");
-const credential_1 = __importStar(require("../oauthcredential/credential"));
+const credential_1 = __importDefault(require("../oauthcredential/credential"));
+const nodemailer_1 = __importDefault(require("nodemailer"));
 class EmailService {
     generateGoogleAuthUrl() {
         return __awaiter(this, void 0, void 0, function* () {
             try {
-                const serviceScope = ["https://mail.google.com/"];
+                const serviceScope = [
+                    "https://mail.google.com/",
+                    "https://www.googleapis.com/auth/gmail.send",
+                ];
                 const authUrl = credential_1.default.generateAuthUrl({
                     access_type: "offline",
                     scope: serviceScope,
@@ -79,10 +63,8 @@ class EmailService {
                         id: message.id || "",
                     });
                     const msg = msgRes.data;
+                    console.log(msg);
                     const emailContent = this.extractEmailContent(msg);
-                    const recipientEmail = this.extractRecipientEmail(msg);
-                    const sendEmail = this.extractSenderEmail(msg);
-                    console.log(recipientEmail, sendEmail);
                     const category = yield this.categorizeEmail(emailContent);
                     const response = this.sendAutomatedReply(category, msg);
                     return response;
@@ -98,16 +80,17 @@ class EmailService {
         return emailContent;
     }
     categorizeEmail(emailContent) {
-        var _a, _b;
         return __awaiter(this, void 0, void 0, function* () {
             try {
-                const completionChat = yield credential_1.openai.chat.completions.create({
-                    messages: [{ role: "user", content: `${emailContent}` }],
-                    model: "gpt-3.5-turbo",
-                    max_tokens: 50,
-                });
-                // Extract relevant information from the completion
-                const responseMessage = (_b = (_a = completionChat.choices[0]) === null || _a === void 0 ? void 0 : _a.message) === null || _b === void 0 ? void 0 : _b.content;
+                // const completionChat = await openai.chat.completions.create({
+                //   messages: [{ role: "user", content: `${emailContent}` }],
+                //   model: "gpt-3.5-turbo",
+                //   max_tokens: 50,
+                // });
+                // // Extract relevant information from the completion
+                // const responseMessage = completionChat.choices[0]?.message?.content;
+                //Hard code
+                const responseMessage = "Thank you very much for reaching out. I am interested in lerning more about your product";
                 // Based on the response text, categorize the email
                 let category = "Other";
                 if (responseMessage === null || responseMessage === void 0 ? void 0 : responseMessage.includes("interested")) {
@@ -131,23 +114,45 @@ class EmailService {
         return __awaiter(this, void 0, void 0, function* () {
             const subject = replyMsg.replySubject;
             const body = replyMsg.replyBody;
+            console.log("to:" + to);
+            console.log("from" + from);
             try {
-                const gmail = googleapis_1.google.gmail({ version: "v1", auth: credential_1.default });
-                const email = `
-        From: ${from}
-        To: ${to}
-        Subject: ${subject}
-
-        ${body}
-      `;
-                const base64EncodedEmail = Buffer.from(email).toString("base64");
-                const response = yield gmail.users.messages.send({
-                    userId: "me",
-                    requestBody: {
-                        raw: base64EncodedEmail,
-                    },
+                const auth = {
+                    type: "OAuth2",
+                    user: from,
+                    clientId: process.env.clientId,
+                    clientSecret: process.env.clientSecret,
+                    accessToken: credential_1.default.credentials.access_token,
+                };
+                // Create transporter
+                const transport = nodemailer_1.default.createTransport({
+                    service: "gmail",
+                    auth: auth,
                 });
-                console.log("Email sent:", response.data);
+                const mailOptions = {
+                    from: from,
+                    to: to,
+                    subject: subject,
+                    text: body,
+                    html: `<h1>Hello from Gmail</h1>`,
+                };
+                const response = yield transport.sendMail(mailOptions);
+                // const gmail = google.gmail({ version: "v1", auth: googleOAuthClient });
+                // const email = `
+                //   from: ${from}
+                //   to: ${to}
+                //   subject: ${subject}
+                //   ${body}
+                // `;
+                // console.log(email);
+                // const base64EncodedEmail = Buffer.from(email).toString("base64");
+                // const response = await gmail.users.messages.send({
+                //   userId: "me",
+                //   requestBody: {
+                //     raw: base64EncodedEmail,
+                //   },
+                // });
+                // console.log("Email sent:", response.data);
             }
             catch (error) {
                 console.error("Error sending email:", error);
@@ -180,11 +185,12 @@ class EmailService {
                         replyMsg.replyBody = "We'll get back to you as soon as possible.";
                         break;
                 }
-                const recipientEmail = this.extractRecipientEmail(msg);
-                const sendEmail = this.extractSenderEmail(msg);
-                console.log(recipientEmail, sendEmail);
+                const recipientEmail = this.extractRecipientEmail(msg)
+                    .trim()
+                    .toLowerCase();
+                const senderEmail = this.extractSenderEmail(msg).trim().toLowerCase();
                 // Send the automated reply using Gmail API
-                yield this.sendEmail(replyMsg, recipientEmail, sendEmail);
+                yield this.sendEmail(replyMsg, senderEmail, recipientEmail);
             }
             catch (error) {
                 console.error("Error sending automated reply:", error);
@@ -214,12 +220,14 @@ class EmailService {
             let senderEmail = "";
             for (const header of headers) {
                 if (header.name === "From") {
+                    console.log(header.value);
                     const emailStartIndex = header.value.indexOf("<");
                     const emailEndIndex = header.value.indexOf(">");
                     senderEmail = header.value.substring(emailStartIndex + 1, emailEndIndex);
                     break;
                 }
             }
+            console.log(senderEmail);
             return senderEmail;
         }
         catch (error) {
