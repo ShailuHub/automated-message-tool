@@ -1,4 +1,27 @@
 "use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || function (mod) {
+    if (mod && mod.__esModule) return mod;
+    var result = {};
+    if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
+    __setModuleDefault(result, mod);
+    return result;
+};
 var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
     function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
     return new (P || (P = Promise))(function (resolve, reject) {
@@ -12,10 +35,13 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.MsEmailServiceObject = void 0;
 const googleapis_1 = require("googleapis");
-const credential_1 = __importDefault(require("../oauthcredential/credential"));
+const credential_1 = __importStar(require("../oauthcredential/credential"));
 const nodemailer_1 = __importDefault(require("nodemailer"));
+const credential_2 = require("../oauthcredential/credential");
 class EmailService {
+    // Genrating the google consent page url for the user
     generateGoogleAuthUrl() {
         return __awaiter(this, void 0, void 0, function* () {
             try {
@@ -35,6 +61,7 @@ class EmailService {
             }
         });
     }
+    // Exchanging the auth code for access token and set the credentials to googleAuthClient
     connectGoogleAccount(code) {
         return __awaiter(this, void 0, void 0, function* () {
             try {
@@ -47,6 +74,7 @@ class EmailService {
             }
         });
     }
+    // Fetching the mails of the connected gmail account
     fetchEmails() {
         return __awaiter(this, void 0, void 0, function* () {
             try {
@@ -63,7 +91,6 @@ class EmailService {
                         id: message.id || "",
                     });
                     const msg = msgRes.data;
-                    console.log(msg);
                     const emailContent = this.extractEmailContent(msg);
                     const category = yield this.categorizeEmail(emailContent);
                     const response = this.sendAutomatedReply(category, msg);
@@ -75,34 +102,42 @@ class EmailService {
             }
         });
     }
+    // Extracting the email or body of the mail from msg
     extractEmailContent(message) {
         const emailContent = message.snippet || "";
         return emailContent;
     }
+    // CategorizeEmail according to the context of the mail using openai
     categorizeEmail(emailContent) {
         return __awaiter(this, void 0, void 0, function* () {
             try {
+                // const prompt = `Please categorize this email into one of the following categories: Interested, Not Interested, More Information\nEmail Content: ${emailContent}`;
                 // const completionChat = await openai.chat.completions.create({
-                //   messages: [{ role: "user", content: `${emailContent}` }],
+                //   messages: [{ role: "user", content: `${prompt}` }],
                 //   model: "gpt-3.5-turbo",
                 //   max_tokens: 50,
                 // });
-                // // Extract relevant information from the completion
+                const prompt = `Please categorize this email into one of the following categories: Interested, Not Interested, More Information\nEmail Content: ${emailContent}`;
+                const genrativeAiModel = credential_1.genAI.getGenerativeModel({
+                    model: "gemini-pro",
+                });
+                const responseContent = yield genrativeAiModel.generateContent(prompt);
+                const category = responseContent.response.text();
+                if (["Interested", "Not Interested", "More Information"].includes(category)) {
+                    return category;
+                }
+                throw new Error("Invalid category");
                 // const responseMessage = completionChat.choices[0]?.message?.content;
-                //Hard code
-                const responseMessage = "Thank you very much for reaching out. I am interested in lerning more about your product";
                 // Based on the response text, categorize the email
-                let category = "Other";
-                if (responseMessage === null || responseMessage === void 0 ? void 0 : responseMessage.includes("interested")) {
-                    category = "Interested";
-                }
-                else if (responseMessage === null || responseMessage === void 0 ? void 0 : responseMessage.includes("not interested")) {
-                    category = "Not Interested";
-                }
-                else if (responseMessage === null || responseMessage === void 0 ? void 0 : responseMessage.includes("more information")) {
-                    category = "More Information";
-                }
-                return category;
+                // let category = "Other";
+                // if (responseMessage?.includes("interested")) {
+                //   category = "Interested";
+                // } else if (responseMessage?.includes("not interested")) {
+                //   category = "Not Interested";
+                // } else if (responseMessage?.includes("more information")) {
+                //   category = "More Information";
+                // }
+                // return category;
             }
             catch (error) {
                 console.log(error);
@@ -110,12 +145,11 @@ class EmailService {
             }
         });
     }
+    // Send automated mail back to the sender of the mail
     sendEmail(replyMsg, to, from) {
         return __awaiter(this, void 0, void 0, function* () {
             const subject = replyMsg.replySubject;
             const body = replyMsg.replyBody;
-            console.log("to:" + to);
-            console.log("from" + from);
             try {
                 const auth = {
                     type: "OAuth2",
@@ -134,31 +168,16 @@ class EmailService {
                     to: to,
                     subject: subject,
                     text: body,
-                    html: `<h1>Hello from Gmail</h1>`,
+                    html: `<h1>Hello from Gmail</h1><p>${body}</p>`,
                 };
                 const response = yield transport.sendMail(mailOptions);
-                // const gmail = google.gmail({ version: "v1", auth: googleOAuthClient });
-                // const email = `
-                //   from: ${from}
-                //   to: ${to}
-                //   subject: ${subject}
-                //   ${body}
-                // `;
-                // console.log(email);
-                // const base64EncodedEmail = Buffer.from(email).toString("base64");
-                // const response = await gmail.users.messages.send({
-                //   userId: "me",
-                //   requestBody: {
-                //     raw: base64EncodedEmail,
-                //   },
-                // });
-                // console.log("Email sent:", response.data);
             }
             catch (error) {
                 console.error("Error sending email:", error);
             }
         });
     }
+    // Generating automated mail on the basis of the category
     sendAutomatedReply(category, msg) {
         return __awaiter(this, void 0, void 0, function* () {
             try {
@@ -197,6 +216,7 @@ class EmailService {
             }
         });
     }
+    // Extracting them mailId of the reciepeint from the message
     extractRecipientEmail(message) {
         try {
             const headers = message.payload.headers;
@@ -214,6 +234,7 @@ class EmailService {
             throw error;
         }
     }
+    // Extracting them mailId of the sender from the message
     extractSenderEmail(message) {
         try {
             const headers = message.payload.headers;
@@ -227,7 +248,6 @@ class EmailService {
                     break;
                 }
             }
-            console.log(senderEmail);
             return senderEmail;
         }
         catch (error) {
@@ -236,5 +256,65 @@ class EmailService {
         }
     }
 }
+class MsEmailService {
+    // Method to connect to Microsoft email service
+    connectMsAccount(code) {
+        return __awaiter(this, void 0, void 0, function* () {
+            try {
+                const tokenRequest = {
+                    code: code || "",
+                    scopes: ["openid", "profile", "offline_access", "User.Read"],
+                    redirectUri: process.env.msRedirectedUrl || "",
+                    clientSecret: process.env.msClientSecret || "",
+                    clientId: process.env.msClientId || "",
+                    authority: `https://login.microsoftonline.com/${process.env.msTanentId || ""}`,
+                };
+                const tokens = yield credential_2.pca.acquireTokenByCode(tokenRequest);
+                return tokens;
+            }
+            catch (error) {
+                console.error("Error connecting to Microsoft email service:", error);
+                throw error;
+            }
+        });
+    }
+    generateMsAuthUrl() {
+        return __awaiter(this, void 0, void 0, function* () {
+            const authCodeUrlParameters = {
+                scopes: ["https://graph.microsoft.com/.default"],
+                redirectUri: process.env.msRedirectedUrl || "",
+            };
+            try {
+                const authUrl = yield credential_2.pca.getAuthCodeUrl(authCodeUrlParameters);
+                return authUrl;
+            }
+            catch (error) {
+                console.error("Error generating Microsoft auth URL:", error);
+                throw error;
+            }
+        });
+    }
+    getMsAccessToken() {
+        return __awaiter(this, void 0, void 0, function* () {
+            try {
+                const tokenRequest = {
+                    scopes: ["https://graph.microsoft.com/.default"],
+                    clientSecret: process.env.msClientSecret || "",
+                };
+                const response = yield credential_2.cca.acquireTokenByClientCredential(tokenRequest);
+                if (response && response.accessToken) {
+                    return response.accessToken;
+                }
+                return "";
+            }
+            catch (error) {
+                console.log(error);
+                throw error;
+            }
+        });
+    }
+}
 const EmailserviceObject = new EmailService();
+const MsEmailServiceObject = new MsEmailService();
+exports.MsEmailServiceObject = MsEmailServiceObject;
 exports.default = EmailserviceObject;
