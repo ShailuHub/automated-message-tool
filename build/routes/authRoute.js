@@ -8,7 +8,4 @@ const router = express_1.default.Router();
 const emailController_1 = require("../controllers/emailController");
 router.get("/google/authurl/reachinbox", emailController_1.getAuthorisationUrl);
 router.get("/google/reachinbox", emailController_1.getGoogleResponse);
-router.get("/microsoft/authurl/reachinbox", emailController_1.getMsAuthorisationUrl);
-router.get("/microsoft/reachinbox", emailController_1.getMicrosoftResponse);
-router.get("/ms-access-token", emailController_1.getMsAccessToken);
 exports.default = router;

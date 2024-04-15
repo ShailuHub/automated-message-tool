@@ -1,5 +1,7 @@
 import { Request, Response } from "express";
-import EmailserviceObject, { MsEmailServiceObject } from "./emailservice";
+import EmailserviceObject from "./emailservice";
+import googleOAuthClient from "../oauthcredential/credential";
+import { google } from "googleapis";
 
 // Redirect to the authorisation url
 const getAuthorisationUrl = async (req: Request, res: Response) => {
@@ -7,53 +9,37 @@ const getAuthorisationUrl = async (req: Request, res: Response) => {
   res.redirect(authUrl);
 };
 
-// Redirect to the Ms authorisation url
-const getMsAuthorisationUrl = async (req: Request, res: Response) => {
-  const authUrl = (await MsEmailServiceObject.generateMsAuthUrl()) || "";
-  res.redirect(authUrl);
-};
-
-// Get the access Token
-const getMsAccessToken = async (req: Request, res: Response) => {
-  const accessToken = (await MsEmailServiceObject.getMsAccessToken()) || "";
-  req.session.clientAccessToken = accessToken;
-  res.send("Access code successfully sent to you");
-};
-
-// Handle user on granting permission
 const getGoogleResponse = async (req: Request, res: Response) => {
-  const code = req.query.code as string;
   try {
-    await EmailserviceObject.connectGoogleAccount(code);
-    await EmailserviceObject.fetchEmails();
-    res.status(201).json({ message: "Automated reply has sent successfully" });
-  } catch (error) {
-    console.error("Error fetching tokens:", error);
-    res.status(500).send("Error occurred during authorization.");
-  }
-};
+    const code = req.query.code as string;
+    // Get tokens from Google OAuth client
+    const { tokens } = await googleOAuthClient.getToken(code);
+    const { refresh_token, access_token } = tokens;
+    // Connect Google account with Email service
+    if (refresh_token) {
+      req.session.googleRefreshToken = refresh_token;
+      googleOAuthClient.setCredentials({ refresh_token, access_token });
+      const peopleApi = google.people({
+        version: "v1",
+        auth: googleOAuthClient,
+      });
+      const userProfile = await peopleApi.people.get({
+        resourceName: "people/me",
+        personFields: "names",
+      });
 
-// Save the ms access token
-const getMicrosoftResponse = async (req: Request, res: Response) => {
-  const code = req.query.code as string;
-  try {
-    const authResult = await MsEmailServiceObject.connectMsAccount(code);
-    if (authResult && authResult.accessToken) {
-      const { accessToken } = authResult;
-      req.session.accessToken = accessToken;
-      res.redirect("/ms-access-token");
+      // Extract the user's name and email from the profile response
+      const userName = userProfile.data.names?.[0]?.displayName;
+      req.session.senderName = userName || "Anonymous";
+      await EmailserviceObject.fetchEmails(req);
+      return res.status(201).json({ message: "Automated mail has sent" });
     } else {
-      throw new Error("Authentication failed or access token not found.");
+      return res.status(500).json({ message: "Missing refresh_token" });
     }
   } catch (error) {
-    console.error(error);
-    throw error;
+    console.error("Error fetching tokens:", error);
+    return res.status(500).send("Error occurred during authorization.");
   }
 };
-export {
-  getAuthorisationUrl,
-  getGoogleResponse,
-  getMsAuthorisationUrl,
-  getMicrosoftResponse,
-  getMsAccessToken,
-};
+
+export { getAuthorisationUrl, getGoogleResponse };

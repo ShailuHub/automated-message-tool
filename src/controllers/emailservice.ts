@@ -1,18 +1,23 @@
 import { google } from "googleapis";
-import googleOAuthClient, {
-  genAI,
-  openai,
-} from "../oauthcredential/credential";
 import nodemailer from "nodemailer";
-import { pca, cca } from "../oauthcredential/credential";
+import { Request } from "express";
+import googleOAuthClient from "../oauthcredential/credential";
+import { genAI } from "../oauthcredential/credential";
+import openai from "../oauthcredential/credential";
+
+interface ReplyMessage {
+  replySubject: string;
+  replyBody: string;
+}
 
 class EmailService {
-  // Genrating the google consent page url for the user
   async generateGoogleAuthUrl() {
     try {
       const serviceScope = [
         "https://mail.google.com/",
         "https://www.googleapis.com/auth/gmail.send",
+        "https://www.googleapis.com/auth/userinfo.profile",
+        "https://www.googleapis.com/auth/userinfo.email",
       ];
       const authUrl = googleOAuthClient.generateAuthUrl({
         access_type: "offline",
@@ -25,105 +30,85 @@ class EmailService {
     }
   }
 
-  // Exchanging the auth code for access token and set the credentials to googleAuthClient
-  async connectGoogleAccount(code: string) {
-    try {
-      const { tokens } = await googleOAuthClient.getToken(code);
-      googleOAuthClient.setCredentials(tokens);
-    } catch (error) {
-      console.log(error);
-      throw error;
-    }
-  }
-
-  // Fetching the mails of the connected gmail account
-  async fetchEmails() {
+  async fetchEmails(req: Request) {
     try {
       const gmail = google.gmail({ version: "v1", auth: googleOAuthClient });
       const res = await gmail.users.messages.list({
         userId: "me",
         labelIds: ["INBOX"],
-        maxResults: 1,
+        maxResults: 2,
       });
       const messages = res.data.messages || [];
-      for (const message of messages) {
+
+      if (messages.length === 0) {
+        console.log("No messages found in the inbox.");
+        return;
+      }
+
+      const sendEmailPromises = messages.map(async (message) => {
         const msgRes = await gmail.users.messages.get({
           userId: "me",
           id: message.id || "",
         });
         const msg = msgRes.data;
-        const emailContent = this.extractEmailContent(msg);
+        const emailContent = msg.snippet || "";
         const category = await this.categorizeEmail(emailContent);
+        if (
+          ["Interested", "Not Interested", "More Information"].includes(
+            category
+          )
+        ) {
+          const msgContent = await this.sendAutomatedReply(msg, req);
+          if (msgContent) {
+            const { replyMsg, recipientEmail, senderEmail } = msgContent;
+            return this.sendEmail(replyMsg, senderEmail, recipientEmail, req);
+          }
+        } else {
+          console.log("Invalid category for email:", category);
+        }
+      });
 
-        const response = this.sendAutomatedReply(category, msg);
-
-        return response;
-      }
+      await Promise.all(sendEmailPromises);
     } catch (error) {
-      console.log(error);
+      console.log("Error fetching or processing emails:", error);
     }
   }
 
-  // Extracting the email or body of the mail from msg
   extractEmailContent(message: any): string {
     const emailContent = message.snippet || "";
     return emailContent;
   }
 
-  // CategorizeEmail according to the context of the mail using openai
   async categorizeEmail(emailContent: string) {
     try {
-      // const prompt = `Please categorize this email into one of the following categories: Interested, Not Interested, More Information\nEmail Content: ${emailContent}`;
-      // const completionChat = await openai.chat.completions.create({
-      //   messages: [{ role: "user", content: `${prompt}` }],
-      //   model: "gpt-3.5-turbo",
-      //   max_tokens: 50,
-      // });
-
-      const prompt = `Please categorize given below email content into one of the following categories: Interested, Not Interested, More Information\nEmail Content: ${emailContent}`;
-
+      const prompt = `Please categorize given below email content into one of the following categories: Interested, Not Interested, More Information only. Among these words only\nEmail Content: ${emailContent}`;
       const genrativeAiModel = genAI.getGenerativeModel({
         model: "gemini-pro",
       });
       const responseContent = await genrativeAiModel.generateContent(prompt);
       const category = responseContent.response.text();
-      if (
-        ["Interested", "Not Interested", "More Information"].includes(category)
-      ) {
-        return category;
-      }
-      throw new Error("Invalid category");
-      // const responseMessage = completionChat.choices[0]?.message?.content;
-      // Based on the response text, categorize the email
-      // let category = "Other";
-      // if (responseMessage?.includes("interested")) {
-      //   category = "Interested";
-      // } else if (responseMessage?.includes("not interested")) {
-      //   category = "Not Interested";
-      // } else if (responseMessage?.includes("more information")) {
-      //   category = "More Information";
-      // }
-      // return category;
+      return category;
     } catch (error) {
       console.log(error);
       throw error;
     }
   }
 
-  // Send automated mail back to the sender of the mail
-  async sendEmail(replyMsg: any, to: string, from: string) {
-    const subject: string = replyMsg.replySubject;
-    const body: string = replyMsg.replyBody;
-
+  async sendEmail(replyMsg: any, to: string, from: string, req: Request) {
     try {
+      const { replySubject, replyBody } = replyMsg;
+      const refresh_token = req.session.googleRefreshToken;
+      googleOAuthClient.setCredentials({ refresh_token });
+      const access_token = (await googleOAuthClient.getAccessToken()).token;
       const auth: any = {
         type: "OAuth2",
         user: from,
         clientId: process.env.clientId,
         clientSecret: process.env.clientSecret,
-        accessToken: googleOAuthClient.credentials.access_token,
+        refreshToken: refresh_token,
+        accessToken: access_token,
       };
-      // Create transporter
+
       const transport = nodemailer.createTransport({
         service: "gmail",
         auth: auth,
@@ -132,56 +117,64 @@ class EmailService {
       const mailOptions = {
         from: from,
         to: to,
-        subject: subject,
-        text: body,
-        html: `<p>${body}</p>`,
+        subject: replySubject,
+        text: replyBody,
+        html: `<p>${replyBody}</p>`,
       };
-      const response = await transport.sendMail(mailOptions);
+
+      await transport.sendMail(mailOptions);
     } catch (error) {
       console.error("Error sending email:", error);
+      throw error;
     }
   }
 
-  // Generating automated mail on the basis of the category
-  async sendAutomatedReply(category: string, msg: any) {
+  async sendAutomatedReply(msg: any, req: Request) {
     try {
-      const replyMsg = { replySubject: "", replyBody: "" };
-
-      // Generate reply message based on the category
-      switch (category) {
-        case "Interested":
-          replyMsg.replySubject = "Thank you for your interest!";
-          replyMsg.replyBody =
-            "We would be happy to provide more information. Could you please let us know a convenient time for a demo call?";
-          break;
-        case "Not Interested":
-          replyMsg.replySubject = "Thank you for considering our offer.";
-          replyMsg.replyBody =
-            "If you have any further questions, feel free to reach out.";
-          break;
-        case "More Information":
-          replyMsg.replySubject = "Additional information about your product";
-          replyMsg.replyBody =
-            "Sorry! I need more information i can't categorise your mail in following categories: Interested, Not interested";
-          break;
-        default:
-          replyMsg.replySubject = "Thank you for your email.";
-          replyMsg.replyBody = "We'll get back to you as soon as possible.";
-          break;
-      }
       const recipientEmail = this.extractRecipientEmail(msg)
         .trim()
         .toLowerCase();
       const senderEmail = this.extractSenderEmail(msg).trim().toLowerCase();
+      const senderName = req.session.senderName;
 
-      // Send the automated reply using Gmail API
-      await this.sendEmail(replyMsg, senderEmail, recipientEmail);
+      const replyMsg: ReplyMessage = { replySubject: "", replyBody: "" };
+
+      const prompt1 = `Please create a suitable subject for mail having Subject: ${
+        msg.payload.headers.find((header: any) => header.name === "Subject")
+          ?.value
+      }`;
+
+      const prompt2 = `Please create a reply email for the following message:
+Subject: ${
+        msg.payload.headers.find((header: any) => header.name === "Subject")
+          ?.value
+      }
+Content: ${this.extractEmailContent(
+        msg
+      )}. Please ensure to structure your reply with suitable paragraphs or indentation. Also, conclude the email with "Thanks" and "Regards, ${senderName}". Begin your main content with "Dear ${senderEmail}".`;
+
+      const genrativeAiModel = genAI.getGenerativeModel({
+        model: "gemini-pro",
+      });
+      const responseSubject = await genrativeAiModel.generateContent(prompt1);
+      const responseContent = await genrativeAiModel.generateContent(prompt2);
+
+      const automatedMsg = responseContent.response.text();
+      const automatedSubject = responseSubject.response.text();
+
+      replyMsg.replySubject = automatedSubject;
+      replyMsg.replyBody = automatedMsg;
+
+      return {
+        replyMsg: replyMsg,
+        senderEmail: senderEmail,
+        recipientEmail: recipientEmail,
+      };
     } catch (error) {
       console.error("Error sending automated reply:", error);
     }
   }
 
-  // Extracting them mailId of the reciepeint from the message
   extractRecipientEmail(message: any): string {
     try {
       const headers = message.payload.headers;
@@ -199,14 +192,12 @@ class EmailService {
     }
   }
 
-  // Extracting them mailId of the sender from the message
   extractSenderEmail(message: any): string {
     try {
       const headers = message.payload.headers;
       let senderEmail = "";
       for (const header of headers) {
         if (header.name === "From") {
-          console.log(header.value);
           const emailStartIndex = header.value.indexOf("<");
           const emailEndIndex = header.value.indexOf(">");
           senderEmail = header.value.substring(
@@ -224,64 +215,6 @@ class EmailService {
   }
 }
 
-class MsEmailService {
-  // Method to connect to Microsoft email service
-  async connectMsAccount(code: string) {
-    try {
-      const tokenRequest = {
-        code: code || "",
-        scopes: ["openid", "profile", "offline_access", "User.Read"],
-        redirectUri: process.env.msRedirectedUrl || "",
-        clientSecret: process.env.msClientSecret || "",
-        clientId: process.env.msClientId || "",
-        authority: `https://login.microsoftonline.com/${
-          process.env.msTanentId || ""
-        }`,
-      };
-
-      const tokens = await pca.acquireTokenByCode(tokenRequest);
-      return tokens;
-    } catch (error) {
-      console.error("Error connecting to Microsoft email service:", error);
-      throw error;
-    }
-  }
-
-  async generateMsAuthUrl() {
-    const authCodeUrlParameters = {
-      scopes: ["https://graph.microsoft.com/.default"],
-      redirectUri: process.env.msRedirectedUrl || "",
-    };
-
-    try {
-      const authUrl = await pca.getAuthCodeUrl(authCodeUrlParameters);
-      return authUrl;
-    } catch (error) {
-      console.error("Error generating Microsoft auth URL:", error);
-      throw error;
-    }
-  }
-
-  async getMsAccessToken() {
-    try {
-      const tokenRequest = {
-        scopes: ["https://graph.microsoft.com/.default"],
-        clientSecret: process.env.msClientSecret || "",
-      };
-
-      const response = await cca.acquireTokenByClientCredential(tokenRequest);
-      if (response && response.accessToken) {
-        return response.accessToken;
-      }
-      return "";
-    } catch (error) {
-      console.log(error);
-      throw error;
-    }
-  }
-}
-
 const EmailserviceObject = new EmailService();
-const MsEmailServiceObject = new MsEmailService();
+
 export default EmailserviceObject;
-export { MsEmailServiceObject };
