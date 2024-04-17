@@ -9,6 +9,8 @@ declare module "express-session" {
   interface SessionData {
     googleRefreshToken: string;
     senderName: string;
+    msPublicAccessToken: string;
+    msClientAccessToken: string;
   }
 }
 const app = express();
@@ -16,7 +18,7 @@ const app = express();
 app.use(cors());
 app.use(
   session({
-    secret: process.env.sessionSecretKey || "dgdf&%^&^%(78545*^G",
+    secret: process.env.SESSION_KEY || "dgdf&%^&^%(78545*^G",
     resave: false,
     saveUninitialized: false,
   })

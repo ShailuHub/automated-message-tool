@@ -21,7 +21,7 @@ const cors_1 = __importDefault(require("cors"));
 const app = (0, express_1.default)();
 app.use((0, cors_1.default)());
 app.use((0, express_session_1.default)({
-    secret: process.env.sessionSecretKey || "dgdf&%^&^%(78545*^G",
+    secret: process.env.SESSION_KEY || "dgdf&%^&^%(78545*^G",
     resave: false,
     saveUninitialized: false,
 }));

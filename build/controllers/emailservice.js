@@ -12,6 +12,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.EmailserviceObject = void 0;
 const googleapis_1 = require("googleapis");
 const nodemailer_1 = __importDefault(require("nodemailer"));
 const credential_1 = __importDefault(require("../oauthcredential/credential"));
@@ -38,14 +39,14 @@ class EmailService {
             }
         });
     }
-    fetchEmails(req) {
+    fetchEmails(req, userEmail) {
         return __awaiter(this, void 0, void 0, function* () {
             try {
                 const gmail = googleapis_1.google.gmail({ version: "v1", auth: credential_1.default });
                 const res = yield gmail.users.messages.list({
                     userId: "me",
                     labelIds: ["INBOX"],
-                    maxResults: 2,
+                    maxResults: 1,
                 });
                 const messages = res.data.messages || [];
                 if (messages.length === 0) {
@@ -63,8 +64,8 @@ class EmailService {
                     if (["Interested", "Not Interested", "More Information"].includes(category)) {
                         const msgContent = yield this.sendAutomatedReply(msg, req);
                         if (msgContent) {
-                            const { replyMsg, recipientEmail, senderEmail } = msgContent;
-                            return this.sendEmail(replyMsg, senderEmail, recipientEmail, req);
+                            const { replyMsg, senderEmail } = msgContent;
+                            return this.sendEmail(replyMsg, senderEmail, userEmail, req);
                         }
                     }
                     else {
@@ -109,8 +110,8 @@ class EmailService {
                 const auth = {
                     type: "OAuth2",
                     user: from,
-                    clientId: process.env.clientId,
-                    clientSecret: process.env.clientSecret,
+                    clientId: process.env.GOOGLE_CLIENT_ID,
+                    clientSecret: process.env.GOOGLE_SECRET_ID,
                     refreshToken: refresh_token,
                     accessToken: access_token,
                 };
@@ -125,7 +126,8 @@ class EmailService {
                     text: replyBody,
                     html: `<p>${replyBody}</p>`,
                 };
-                yield transport.sendMail(mailOptions);
+                const response = yield transport.sendMail(mailOptions);
+                console.log(response.response);
             }
             catch (error) {
                 console.error("Error sending email:", error);
@@ -134,8 +136,8 @@ class EmailService {
         });
     }
     sendAutomatedReply(msg, req) {
-        var _a, _b;
         return __awaiter(this, void 0, void 0, function* () {
+            var _a, _b;
             try {
                 const recipientEmail = this.extractRecipientEmail(msg)
                     .trim()
@@ -143,7 +145,7 @@ class EmailService {
                 const senderEmail = this.extractSenderEmail(msg).trim().toLowerCase();
                 const senderName = req.session.senderName;
                 const replyMsg = { replySubject: "", replyBody: "" };
-                const prompt1 = `Please create a suitable subject for mail having Subject: ${(_a = msg.payload.headers.find((header) => header.name === "Subject")) === null || _a === void 0 ? void 0 : _a.value}`;
+                const prompt1 = `Please create one suitable subject not more than one line of chracter for mail having Subject: ${(_a = msg.payload.headers.find((header) => header.name === "Subject")) === null || _a === void 0 ? void 0 : _a.value}`;
                 const prompt2 = `Please create a reply email for the following message:
 Subject: ${(_b = msg.payload.headers.find((header) => header.name === "Subject")) === null || _b === void 0 ? void 0 : _b.value}
 Content: ${this.extractEmailContent(msg)}. Please ensure to structure your reply with suitable paragraphs or indentation. Also, conclude the email with "Thanks" and "Regards, ${senderName}". Begin your main content with "Dear ${senderEmail}".`;
@@ -173,6 +175,7 @@ Content: ${this.extractEmailContent(msg)}. Please ensure to structure your reply
             let recipientEmail = "";
             for (const header of headers) {
                 if (header.name === "To") {
+                    console.log(header.value);
                     recipientEmail = header.value;
                     break;
                 }
@@ -205,4 +208,4 @@ Content: ${this.extractEmailContent(msg)}. Please ensure to structure your reply
     }
 }
 const EmailserviceObject = new EmailService();
-exports.default = EmailserviceObject;
+exports.EmailserviceObject = EmailserviceObject;

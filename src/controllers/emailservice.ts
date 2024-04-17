@@ -3,7 +3,6 @@ import nodemailer from "nodemailer";
 import { Request } from "express";
 import googleOAuthClient from "../oauthcredential/credential";
 import { genAI } from "../oauthcredential/credential";
-import openai from "../oauthcredential/credential";
 
 interface ReplyMessage {
   replySubject: string;
@@ -30,16 +29,15 @@ class EmailService {
     }
   }
 
-  async fetchEmails(req: Request) {
+  async fetchEmails(req: Request, userEmail: string) {
     try {
       const gmail = google.gmail({ version: "v1", auth: googleOAuthClient });
       const res = await gmail.users.messages.list({
         userId: "me",
         labelIds: ["INBOX"],
-        maxResults: 2,
+        maxResults: 1,
       });
       const messages = res.data.messages || [];
-
       if (messages.length === 0) {
         console.log("No messages found in the inbox.");
         return;
@@ -60,8 +58,8 @@ class EmailService {
         ) {
           const msgContent = await this.sendAutomatedReply(msg, req);
           if (msgContent) {
-            const { replyMsg, recipientEmail, senderEmail } = msgContent;
-            return this.sendEmail(replyMsg, senderEmail, recipientEmail, req);
+            const { replyMsg, senderEmail } = msgContent;
+            return this.sendEmail(replyMsg, senderEmail, userEmail, req);
           }
         } else {
           console.log("Invalid category for email:", category);
@@ -103,12 +101,11 @@ class EmailService {
       const auth: any = {
         type: "OAuth2",
         user: from,
-        clientId: process.env.clientId,
-        clientSecret: process.env.clientSecret,
+        clientId: process.env.GOOGLE_CLIENT_ID,
+        clientSecret: process.env.GOOGLE_SECRET_ID,
         refreshToken: refresh_token,
         accessToken: access_token,
       };
-
       const transport = nodemailer.createTransport({
         service: "gmail",
         auth: auth,
@@ -122,7 +119,8 @@ class EmailService {
         html: `<p>${replyBody}</p>`,
       };
 
-      await transport.sendMail(mailOptions);
+      const response = await transport.sendMail(mailOptions);
+      console.log(response.response);
     } catch (error) {
       console.error("Error sending email:", error);
       throw error;
@@ -139,7 +137,7 @@ class EmailService {
 
       const replyMsg: ReplyMessage = { replySubject: "", replyBody: "" };
 
-      const prompt1 = `Please create a suitable subject for mail having Subject: ${
+      const prompt1 = `Please create one suitable subject not more than one line of chracter for mail having Subject: ${
         msg.payload.headers.find((header: any) => header.name === "Subject")
           ?.value
       }`;
@@ -181,6 +179,7 @@ Content: ${this.extractEmailContent(
       let recipientEmail = "";
       for (const header of headers) {
         if (header.name === "To") {
+          console.log(header.value);
           recipientEmail = header.value;
           break;
         }
@@ -217,4 +216,4 @@ Content: ${this.extractEmailContent(
 
 const EmailserviceObject = new EmailService();
 
-export default EmailserviceObject;
+export { EmailserviceObject };
